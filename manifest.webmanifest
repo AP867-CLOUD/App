@@ -1,8 +1,8 @@
 {
   "name": "Matchday Vault",
   "short_name": "Matchday Vault",
-  "description": "Matchday Vault \u2014 memberships, ballots, fixtures, tickets, sales and profit.",
-  "start_url": "./?source=pwa-v13-1",
+  "description": "Matchday Vault V14 \u2014 cloud-sync ready football operations with automated booking inbox, passes, finance, memberships, ballots and sales.",
+  "start_url": "./?source=pwa-v14",
   "scope": "./",
   "display": "standalone",
   "background_color": "#03070a",
