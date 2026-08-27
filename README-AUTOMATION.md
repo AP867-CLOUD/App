@@ -24,3 +24,12 @@ After deploying the function, schedule it from Supabase/your scheduler at a reas
 - Supabase tables use Row Level Security for user-owned operational data.
 - Gmail refresh tokens are server-side only and have no client read policy.
 - Never place a service-role key, Gmail password, Google client secret, full card number or CVV in `index.html`.
+
+## V14.1 stability fix (26 Aug 2026)
+
+- Fixed the startup black screen caused by the missing `ensureV132State()` compatibility normalizer.
+- Added a guarded startup recovery screen so future boot failures do not leave a blank page.
+- Made the Arsenal seed tolerate browsers where localStorage is temporarily unavailable.
+- Bumped the PWA service-worker cache so GitHub Pages clients replace the broken cached shell.
+- Added Manchester United fulfilment fields for Tickgen claim/generate URL, Tickgen status, and private SKIDATA/NFC ticket URL alongside iOS, Android and Seat Labs links.
+- Raw NFC URLs are not pre-seeded into the public app source.

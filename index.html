@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#05080b">
-<title>Matchday Vault — Club Operating System — V13.2</title>
+<title>Matchday Vault — Club Operating System — V14.1</title>
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="./favicon-16.png">
@@ -605,7 +605,7 @@ function save(){
     const previous=localStorage.getItem(STORE_KEY);
     if(previous) localStorage.setItem(RECOVERY_KEY,previous);
     localStorage.setItem(STORE_KEY,JSON.stringify(state));
-    localStorage.setItem(META_KEY,JSON.stringify({lastSaved:new Date().toISOString(),version:'6.0'}));
+    localStorage.setItem(META_KEY,JSON.stringify({lastSaved:new Date().toISOString(),version:'14.1'}));
     toast('Saved securely on this device');
   }catch(e){console.error(e);alert('Matchday could not save. Export a secure backup before closing the app.');}
 }
@@ -680,7 +680,7 @@ async function makeEncryptedBackup(password){
   if(!window.crypto?.subtle)throw new Error('Encryption is not supported in this browser.');
   const enc=new TextEncoder(),salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12));
   const key=await deriveKey(password,salt);
-  const payload=enc.encode(JSON.stringify({app:'Matchday Vault',version:'6.0',createdAt:new Date().toISOString(),state}));
+  const payload=enc.encode(JSON.stringify({app:'Matchday Vault',version:'14.1',createdAt:new Date().toISOString(),state}));
   const cipher=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},key,payload));
   return JSON.stringify({format:'matchday-vault-encrypted-v1',kdf:'PBKDF2-SHA256',iterations:250000,salt:bytesToB64(salt),iv:bytesToB64(iv),ciphertext:bytesToB64(cipher)},null,2);
 }
@@ -1871,7 +1871,8 @@ function dashboardView(t){
 function seedUserData(){
   ensureV131State();
   const USER_SEED_KEY='matchday-user-seed-arsenal-v1';
-  if(localStorage.getItem(USER_SEED_KEY)==='1') return;
+  let alreadySeeded=false;try{alreadySeeded=localStorage.getItem(USER_SEED_KEY)==='1'}catch(e){console.warn('Local storage unavailable; continuing with in-memory seed',e)}
+  if(alreadySeeded) return;
   const keep=(existing,seed)=>{if(!existing)return structuredClone(seed);const out={...seed,...existing};for(const [k,v] of Object.entries(seed)){if((existing[k]===undefined||existing[k]===null||existing[k]==='')&&v!==undefined)out[k]=structuredClone(v)}return out};
   const upsert=(arr,seed)=>{const i=arr.findIndex(x=>x.id===seed.id || (seed.memberNumber&&((x.memberNumber||x.membershipNo)===seed.memberNumber)) || (seed.nickname&&seed.last4&&x.nickname===seed.nickname&&x.last4===seed.last4) || (seed.name&&x.name===seed.name) || (seed.fixtureId&&seed.block&&seed.seat&&x.fixtureId===seed.fixtureId&&x.block===seed.block&&x.seat===seed.seat));if(i<0)arr.push(structuredClone(seed));else{const current=arr[i];arr[i]=keep(current,seed);if(!current.id||current.id!==seed.id)arr[i].id=seed.id}};
   const cards=[
@@ -1919,6 +1920,9 @@ function seedUserData(){
 }
 
 
+// Compatibility bridge: V13.2 state normalizer was missing from the uploaded build.
+function ensureV132State(){ ensureV131State(); }
+
 // ===== MATCHDAY VAULT V13.3 MASTER =====
 let loginClubFilter='arsenal',inboxSelectedId='',inboxClubFilter='all';
 function ensureV133State(){
@@ -1959,12 +1963,12 @@ let fulfilClubFilter='all', fulfilStatusFilter='all', gmailAccessToken='';
 function ensureV134State(){
   ensureV133State();
   state.tickets=(state.tickets||[]).map(t=>({
-    iosPassLink:'',androidPassLink:'',seatLabsLink:'',deliveryStatus:'not_ready',deliveryChannel:'',deliveredAt:'',deliveryNotes:'',customerMessage:'',...t
+    iosPassLink:'',androidPassLink:'',seatLabsLink:'',tickgenClaimUrl:'',skidataTicketUrl:'',tickgenStatus:'not_generated',deliveryStatus:'not_ready',deliveryChannel:'',deliveredAt:'',deliveryNotes:'',customerMessage:'',...t
   }));
 }
 function deliveryLabel(s){return ({not_ready:'Not ready',ready:'Ready to send',sent:'Sent',opened:'Opened / confirmed',replaced:'Replaced'})[s]||'Not ready'}
 function deliveryClass(s){return s==='sent'?'delivery-sent':s==='opened'?'delivery-opened':s==='replaced'?'delivery-replaced':s==='ready'?'delivery-ready':''}
-function bestCustomerLink(t){return safeUrl(t.seatLabsLink)||safeUrl(t.iosPassLink)||safeUrl(t.androidPassLink)||safeUrl(t.ticketLink)||''}
+function bestCustomerLink(t){return safeUrl(t.seatLabsLink)||safeUrl(t.iosPassLink)||safeUrl(t.androidPassLink)||safeUrl(t.skidataTicketUrl)||safeUrl(t.ticketLink)||''}
 function customerShareText(t){
   const b=buyer(t.buyerId),link=bestCustomerLink(t),date=t.date?fmtDate(t.date):'';
   return (t.customerMessage||`Hi${b?.name?' '+b.name:''}, your ticket for ${t.event||'the match'}${date?' on '+date:''} is ready.${link?'\\n'+link:''}`).trim();
@@ -1981,13 +1985,15 @@ function markDeliveredV134(id,status='sent'){
   const t=state.tickets.find(x=>x.id===id);if(!t)return;
   t.deliveryStatus=status;if(status==='sent'&&!t.deliveredAt)t.deliveredAt=new Date().toISOString();save();render();
 }
+function tickgenStatusLabel(s){return ({not_generated:'Not generated',ready:'Ready',claimed:'Claimed',sent:'Sent'})[s]||'Not generated'}
 function openFulfilModalV134(id){
-  ensureV134State();const t=state.tickets.find(x=>x.id===id);if(!t)return;const b=buyer(t.buyerId);
-  modal(`<div class="modalhead"><h3>Pass / fulfilment</h3><button class="close" onclick="closeModal()">×</button></div><div class="seed-note"><b>${esc(t.event||'Ticket')}</b>${b?' · '+esc(b.name):''}<br>Store legitimate customer/pass links here. Matchday Vault does not generate or bypass club NFC credentials.</div><div class="formgrid">
+  ensureV134State();const t=state.tickets.find(x=>x.id===id);if(!t)return;const b=buyer(t.buyerId),isUnited=t.clubId==='manutd';
+  modal(`<div class="modalhead"><h3>Pass / fulfilment</h3><button class="close" onclick="closeModal()">×</button></div><div class="seed-note"><b>${esc(t.event||'Ticket')}</b>${b?' · '+esc(b.name):''}<br>Store customer/pass links against the ticket record. Keep raw NFC URLs private because possession of the link may provide ticket access.</div><div class="formgrid">
   <div class="field full"><label>Normal ticket / portal link</label><input id="pf-ticket" value="${esc(t.ticketLink||'')}"></div>
   <div class="field full"><label>iOS / Apple Wallet pass link</label><input id="pf-ios" value="${esc(t.iosPassLink||'')}" placeholder="https://... or official .pkpass link"></div>
   <div class="field full"><label>Android / Google Wallet pass link</label><input id="pf-android" value="${esc(t.androidPassLink||'')}" placeholder="https://..."></div>
   <div class="field full"><label>Seat Labs / customer delivery link</label><input id="pf-seatlabs" value="${esc(t.seatLabsLink||'')}" placeholder="Paste generated customer link"></div>
+  ${isUnited?`<div class="field full"><label>Tickgen generate / claim URL</label><input id="pf-tickgen" value="${esc(t.tickgenClaimUrl||'https://tickgen.com/generate/claim')}" placeholder="https://tickgen.com/generate/claim"></div><div class="field full"><label>SKIDATA / NFC ticket URL</label><input id="pf-skidata" value="${esc(t.skidataTicketUrl||'')}" placeholder="https://hb.webhost.skidata.com/.../ticket/..."></div><div class="field"><label>Tickgen status</label><select id="pf-tickgen-status"><option value="not_generated" ${t.tickgenStatus==='not_generated'?'selected':''}>Not generated</option><option value="ready" ${t.tickgenStatus==='ready'?'selected':''}>Ready</option><option value="claimed" ${t.tickgenStatus==='claimed'?'selected':''}>Claimed</option><option value="sent" ${t.tickgenStatus==='sent'?'selected':''}>Sent</option></select></div>`:''}
   <div class="field"><label>Delivery status</label><select id="pf-status"><option value="not_ready" ${t.deliveryStatus==='not_ready'?'selected':''}>Not ready</option><option value="ready" ${t.deliveryStatus==='ready'?'selected':''}>Ready to send</option><option value="sent" ${t.deliveryStatus==='sent'?'selected':''}>Sent</option><option value="opened" ${t.deliveryStatus==='opened'?'selected':''}>Opened / confirmed</option><option value="replaced" ${t.deliveryStatus==='replaced'?'selected':''}>Replaced</option></select></div>
   <div class="field"><label>Delivery channel</label><select id="pf-channel"><option value="" ${!t.deliveryChannel?'selected':''}>Not set</option><option value="WhatsApp" ${t.deliveryChannel==='WhatsApp'?'selected':''}>WhatsApp</option><option value="Email" ${t.deliveryChannel==='Email'?'selected':''}>Email</option><option value="SMS" ${t.deliveryChannel==='SMS'?'selected':''}>SMS</option><option value="Other" ${t.deliveryChannel==='Other'?'selected':''}>Other</option></select></div>
   <div class="field full"><label>Customer message</label><textarea id="pf-message" placeholder="Optional custom message">${esc(t.customerMessage||'')}</textarea></div>
@@ -1996,19 +2002,21 @@ function openFulfilModalV134(id){
 }
 function saveFulfilV134(id){
   const t=state.tickets.find(x=>x.id===id);if(!t)return;const old=t.deliveryStatus;
-  t.ticketLink=$('#pf-ticket').value.trim();t.iosPassLink=$('#pf-ios').value.trim();t.androidPassLink=$('#pf-android').value.trim();t.seatLabsLink=$('#pf-seatlabs').value.trim();t.deliveryStatus=$('#pf-status').value;t.deliveryChannel=$('#pf-channel').value;t.customerMessage=$('#pf-message').value.trim();t.deliveryNotes=$('#pf-notes').value.trim();if(t.deliveryStatus==='sent'&&old!=='sent')t.deliveredAt=new Date().toISOString();save();closeModal();render();
+  t.ticketLink=$('#pf-ticket').value.trim();t.iosPassLink=$('#pf-ios').value.trim();t.androidPassLink=$('#pf-android').value.trim();t.seatLabsLink=$('#pf-seatlabs').value.trim();
+  if(t.clubId==='manutd'){t.tickgenClaimUrl=$('#pf-tickgen')?.value.trim()||'';t.skidataTicketUrl=$('#pf-skidata')?.value.trim()||'';t.tickgenStatus=$('#pf-tickgen-status')?.value||'not_generated'}
+  t.deliveryStatus=$('#pf-status').value;t.deliveryChannel=$('#pf-channel').value;t.customerMessage=$('#pf-message').value.trim();t.deliveryNotes=$('#pf-notes').value.trim();if(t.deliveryStatus==='sent'&&old!=='sent')t.deliveredAt=new Date().toISOString();save();closeModal();render();
 }
 function fulfilCardV134(t){
-  const c=club(t.clubId),b=buyer(t.buyerId),ios=safeUrl(t.iosPassLink),andr=safeUrl(t.androidPassLink),sl=safeUrl(t.seatLabsLink),base=safeUrl(t.ticketLink),best=bestCustomerLink(t);
+  const c=club(t.clubId),b=buyer(t.buyerId),ios=safeUrl(t.iosPassLink),andr=safeUrl(t.androidPassLink),sl=safeUrl(t.seatLabsLink),base=safeUrl(t.ticketLink),tg=safeUrl(t.tickgenClaimUrl),nfc=safeUrl(t.skidataTicketUrl),best=bestCustomerLink(t),isUnited=t.clubId==='manutd';
   return `<article class="fulfil-card"><div class="fulfil-head"><div style="display:flex;gap:9px;align-items:center">${crest(c.id,true)}<div><h4>${esc(t.event||'Ticket')}</h4><p>${fmtDate(t.date)} · ${esc(b?.name||'No buyer')} · ${esc(t.block||'')}</p></div></div><span class="acq-pill ${deliveryClass(t.deliveryStatus)}">${esc(deliveryLabel(t.deliveryStatus))}</span></div>
-  <div class="fulfil-links"><div class="fulfil-link"><span>iOS</span><b>${ios?'Ready':'—'}</b></div><div class="fulfil-link"><span>Android</span><b>${andr?'Ready':'—'}</b></div><div class="fulfil-link"><span>Seat Labs</span><b>${sl?'Ready':'—'}</b></div><div class="fulfil-link"><span>Ticket link</span><b>${base?'Ready':'—'}</b></div></div>
-  <div class="fulfil-actions">${best?`<a class="btn" href="${esc(best)}" target="_blank" rel="noopener">Open customer link ↗</a>`:''}<button class="btn primary" onclick="shareCustomerV134('${t.id}')">Share to customer</button><button class="mini" onclick="openFulfilModalV134('${t.id}')">Edit passes</button>${t.deliveryStatus!=='sent'?`<button class="mini" onclick="markDeliveredV134('${t.id}','sent')">Mark sent</button>`:''}</div>${t.deliveredAt?`<div class="meta" style="margin-top:7px">Sent ${new Date(t.deliveredAt).toLocaleString()}${t.deliveryChannel?' · '+esc(t.deliveryChannel):''}</div>`:''}</article>`;
+  <div class="fulfil-links"><div class="fulfil-link"><span>iOS</span><b>${ios?'Ready':'—'}</b></div><div class="fulfil-link"><span>Android</span><b>${andr?'Ready':'—'}</b></div><div class="fulfil-link"><span>Seat Labs</span><b>${sl?'Ready':'—'}</b></div><div class="fulfil-link"><span>Ticket link</span><b>${base?'Ready':'—'}</b></div>${isUnited?`<div class="fulfil-link"><span>Tickgen</span><b>${esc(tickgenStatusLabel(t.tickgenStatus))}</b></div><div class="fulfil-link"><span>NFC / SKIDATA</span><b>${nfc?'Ready':'—'}</b></div>`:''}</div>
+  <div class="fulfil-actions">${isUnited&&tg?`<a class="btn" href="${esc(tg)}" target="_blank" rel="noopener">Generate / claim ↗</a>`:''}${isUnited&&nfc?`<a class="btn" href="${esc(nfc)}" target="_blank" rel="noopener">Open NFC ↗</a>`:''}${best?`<a class="btn" href="${esc(best)}" target="_blank" rel="noopener">Open customer link ↗</a>`:''}<button class="btn primary" onclick="shareCustomerV134('${t.id}')">Share to customer</button><button class="mini" onclick="openFulfilModalV134('${t.id}')">Edit passes</button>${t.deliveryStatus!=='sent'?`<button class="mini" onclick="markDeliveredV134('${t.id}','sent')">Mark sent</button>`:''}</div>${t.deliveredAt?`<div class="meta" style="margin-top:7px">Sent ${new Date(t.deliveredAt).toLocaleString()}${t.deliveryChannel?' · '+esc(t.deliveryChannel):''}</div>`:''}</article>`;
 }
 function fulfilmentView(){
   ensureV134State();let items=state.tickets.filter(t=>t.buyerId||['sold','sent','used','reserved'].includes(t.status));
   if(fulfilClubFilter!=='all')items=items.filter(t=>t.clubId===fulfilClubFilter);if(fulfilStatusFilter!=='all')items=items.filter(t=>t.deliveryStatus===fulfilStatusFilter);items.sort((a,b)=>(a.date||'9999').localeCompare(b.date||'9999'));
   const ready=state.tickets.filter(t=>t.deliveryStatus==='ready').length,sent=state.tickets.filter(t=>t.deliveryStatus==='sent'||t.deliveryStatus==='opened').length,missing=state.tickets.filter(t=>t.buyerId&&!bestCustomerLink(t)).length;
-  return `<div class="os-page-head"><div><div class="eyebrow">PASSES / FULFILMENT</div><h2>Get every sold ticket to the right customer.</h2><p>Ticket link, iOS pass, Android pass, Seat Labs/customer link, buyer, delivery channel and sent status.</p></div></div><div class="os-kpis"><div class="os-kpi"><span>Ready to send</span><b>${ready}</b><em>Pass/link prepared</em></div><div class="os-kpi"><span>Sent / confirmed</span><b>${sent}</b><em>Delivered</em></div><div class="os-kpi"><span>Missing link</span><b>${missing}</b><em>Sold tickets needing fulfilment</em></div></div>
+  return `<div class="os-page-head"><div><div class="eyebrow">PASSES / FULFILMENT</div><h2>Get every sold ticket to the right customer.</h2><p>Ticket link, iOS pass, Android pass, Seat Labs/customer link, buyer, delivery channel and sent status. Manchester United tickets also support Tickgen claim and private SKIDATA/NFC URLs.</p></div></div><div class="os-kpis"><div class="os-kpi"><span>Ready to send</span><b>${ready}</b><em>Pass/link prepared</em></div><div class="os-kpi"><span>Sent / confirmed</span><b>${sent}</b><em>Delivered</em></div><div class="os-kpi"><span>Missing link</span><b>${missing}</b><em>Sold tickets needing fulfilment</em></div></div>
   <div class="toolbar"><select class="filter" onchange="fulfilClubFilter=this.value;render()"><option value="all">All clubs</option>${state.clubs.map(c=>`<option value="${c.id}" ${fulfilClubFilter===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select><select class="filter" onchange="fulfilStatusFilter=this.value;render()"><option value="all">All delivery statuses</option>${[['not_ready','Not ready'],['ready','Ready'],['sent','Sent'],['opened','Opened / confirmed'],['replaced','Replaced']].map(([v,l])=>`<option value="${v}" ${fulfilStatusFilter===v?'selected':''}>${l}</option>`).join('')}</select></div>
   ${items.length?`<div class="fulfil-grid">${items.map(fulfilCardV134).join('')}</div>`:empty('No sold/reserved customer tickets yet.')}`;
 }
@@ -2102,14 +2110,21 @@ function mobileNav(){return [['dashboard','⌂','Home'],['inventory','🎟','Tic
 function render(){ensureV14State();seedHomeFixtures();const t=totals();$('#app').innerHTML=`<div class="topbar"><div class="brand"><div class="brandmark">${brandIcon()}</div><div><h1>Matchday Vault</h1><p class="brand-sub">Football operations, without spreadsheets.</p></div></div><div class="top-actions"><button class="btn secondary-hide" onclick="view='sync';render()">☁ Sync</button><button class="btn secondary-hide" onclick="view='inbox';render()">✉ Inbox</button><button class="btn primary" onclick="openQuickAddV13()">Quick Add +</button></div></div><div class="layout"><aside class="sidebar"><div class="sidebox"><div class="v7-brand-panel">${brandIcon()}<b>MATCHDAY</b><span>VAULT</span></div><div class="navlabel">Operations</div>${navItem('dashboard','⌂','Command Centre')}${navItem('inventory','🎟','Ticket Inventory',state.tickets.length)}${navItem('fulfilment','↗','Passes / Fulfilment',state.tickets.filter(t=>t.buyerId).length)}${navItem('memberships','◇','Membership Vault',state.memberships.length)}${navItem('groups','◎','Groups (F&F)',state.groups.length)}${navItem('ballots','◈','Ballot Centre',state.ballots.length)}${navItem('payments','▣','Wallet / Cards',state.paymentMethods.length)}${navItem('logins','🔑','Login Vault',state.logins.length)}${navItem('inbox','✉','Matchday Inbox',state.inbox.length)}${navItem('buyers','◉','Buyers / Customers',state.buyers.length)}${navItem('schedule','▦','Fixtures',state.fixtures.length)}<button class="navbtn ${view==='finance'?'active':''}" onclick="view='finance';render()"><span class="navico">£</span><span>Finance Centre</span></button><button class="navbtn ${view==='sync'?'active':''}" onclick="view='sync';render()"><span class="navico">☁</span><span>Sync & Automation</span><span class="pillcount">${state.automation.reviewQueue.length}</span></button>${navItem('analytics','↗','Analytics')}<div class="navlabel">Clubs</div>${state.clubs.map(c=>`<button class="navbtn ${view==='club'&&clubFilter===c.id?'active':''}" onclick="openClub('${c.id}')">${crest(c.id,true)}<span>${esc(c.name)}</span><span class="pillcount">${membershipsForClub(c.id).length}/${state.tickets.filter(t=>t.clubId===c.id).length}</span></button>`).join('')}<div class="sidefooter"><button class="navbtn" onclick="openBackupCenter()"><span class="navico">🔐</span>Backup & recovery</button></div></div></aside><main class="main">${renderMain(t)}</main></div><button class="fab" onclick="openQuickAddV13()">+</button><div class="mobilebar">${mobileNav()}</div>`}
 
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});
-load();
+function bootMatchdayVault(){
+  try{load()}catch(e){
+    console.error('Matchday Vault boot failed',e);
+    const app=document.getElementById('app');
+    if(app)app.innerHTML=`<div style="max-width:760px;margin:70px auto;padding:24px;font-family:system-ui;color:#f7f8fb"><h1 style="color:#f2bd45">Matchday Vault</h1><h2>Startup recovery</h2><p>The app hit a browser storage/cache error instead of showing a black screen. Your existing data has not been deleted.</p><pre style="white-space:pre-wrap;background:#11141c;padding:14px;border-radius:12px;border:1px solid #252b39">${esc(e?.message||String(e))}</pre><button class="btn primary" onclick="location.reload()">Reload app</button></div>`;
+  }
+}
+bootMatchdayVault();
 
 // ---- PWA install + offline shell ----
 let deferredInstallPrompt = null;
 window.addEventListener('beforeinstallprompt', (event)=>{
   event.preventDefault();
   deferredInstallPrompt = event;
-  if(localStorage.getItem('matchday-install-dismissed') !== '1') document.getElementById('install-banner')?.classList.add('show');
+  let dismissed='0';try{dismissed=localStorage.getItem('matchday-install-dismissed')||'0'}catch{}if(dismissed!=='1') document.getElementById('install-banner')?.classList.add('show');
 });
 window.addEventListener('appinstalled', ()=>{
   deferredInstallPrompt = null;
@@ -2117,7 +2132,7 @@ window.addEventListener('appinstalled', ()=>{
 });
 function dismissInstall(){
   document.getElementById('install-banner')?.classList.remove('show');
-  localStorage.setItem('matchday-install-dismissed','1');
+  try{localStorage.setItem('matchday-install-dismissed','1')}catch{}
 }
 async function installApp(){
   if(!deferredInstallPrompt){
